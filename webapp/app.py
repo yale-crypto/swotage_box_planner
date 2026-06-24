@@ -1,23 +1,11 @@
-"""
-Flask backend for the 3-D bin packer web UI.
-
-Routes
-------
-GET  /              → the single-page app
-POST /api/pack      → run the packer on a JSON problem, return a JSON result
-                      (summary, per-type table, placements + free voids for the
-                      3-D scene, step log, and the full text report for export)
-
-The heavy lifting stays in the `binpack` package; this module only adapts it to
-HTTP and assigns stable colours (shared with the matplotlib view).
-"""
-
 from __future__ import annotations
 
 import os
+import time
 from typing import Any
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, g, jsonify, render_template, request
+from itsdangerous import BadSignature, URLSafeSerializer
 
 from binpack import Box, Item, PackingEngine, build_report
 
@@ -30,6 +18,61 @@ ITEM_PALETTE = [
 FREE_COLOR = "#8c93a0"  # uniform slate for void regions (Stowage style)
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "dev-stowage-secret-change-me")
+
+# ── Very simple auth ─────────────────────────────────────────────────────────
+# Browser-native HTTP Basic Auth (no login UI). A signed cookie carries the
+# per-user session so we can give each account a different expiry.
+USERS = {
+    "admin": {"password": "admin", "ttl": None},   # no expiry
+    "yash":  {"password": "yash",  "ttl": 600},     # 10-minute session
+}
+_signer = URLSafeSerializer(app.secret_key, salt="stowage-auth")
+_COOKIE = "stw_session"
+
+
+def _verify_token(token: str) -> dict | None:
+    try:
+        data = _signer.loads(token)
+    except BadSignature:
+        return None
+    exp = data.get("exp")
+    if exp is not None and time.time() > exp:
+        return None
+    return data
+
+
+@app.before_request
+def _require_auth() -> Response | None:
+    # 1. Valid session cookie?
+    token = request.cookies.get(_COOKIE)
+    if token and (data := _verify_token(token)) is not None:
+        g.auth_user = data["u"]
+        return None
+
+    # 2. Valid Basic Auth credentials? Mint a fresh session cookie.
+    cred = request.authorization
+    if cred and cred.username in USERS and USERS[cred.username]["password"] == cred.password:
+        ttl = USERS[cred.username]["ttl"]
+        exp = time.time() + ttl if ttl is not None else None
+        g.auth_user = cred.username
+        g.new_token = (_signer.dumps({"u": cred.username, "exp": exp}), ttl)
+        return None
+
+    # 3. Challenge — triggers the browser's native login dialog.
+    return Response(
+        "Authentication required.", 401,
+        {"WWW-Authenticate": 'Basic realm="Stowage"'},
+    )
+
+
+@app.after_request
+def _set_session(resp: Response) -> Response:
+    pending = getattr(g, "new_token", None)
+    if pending is not None:
+        token, ttl = pending
+        resp.set_cookie(_COOKIE, token, max_age=ttl, httponly=True, samesite="Lax")
+    return resp
 
 
 @app.get("/")
