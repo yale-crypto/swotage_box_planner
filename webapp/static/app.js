@@ -15,6 +15,13 @@ const BLANK = {
 };
 let lastResult = null;
 let showFree = true;
+let focusType = null;   // legend selection: id of the type to highlight, or null for all
+
+// Free-space (void) styling — translucent fill so items stay visible through it,
+// with clear dashed outlines so each void is easy to pick out. Tweak to taste.
+const FREE_FILL_OPACITY = 0.18;
+const FREE_EDGE_COLOR = "#5f6b7d";
+const FREE_EDGE_WIDTH = 2.4;
 
 const $ = (id) => document.getElementById(id);
 
@@ -105,33 +112,39 @@ function buildTraces(r) {
   // container wireframe
   traces.push(edgeTrace([{ pos: [0, 0, 0], size: [bl, bw, bh] }], "#a9aaa2", 2.5));
 
-  // solid items
+  // solid items — when a legend type is focused, the others go transparent
+  const focusing = focusType !== null;
   for (const p of r.placements) {
     const [x, y, z] = p.position, [l, w, h] = p.orientation;
+    const lit = !focusing || p.item_id === focusType;
     traces.push(cuboidMesh(x, y, z, l, w, h, {
-      color: p.color, opacity: 1.0,
+      color: p.color, opacity: lit ? 1.0 : 0.07,
       hover: `Type ${p.item_id}<br>${fmt(p.orientation)}<br>@ (${fmt(p.position)})`,
     }));
   }
   // per-item outlines (so identical stacked items stay countable) — kept dark
-  // and thick enough to read clearly against same-coloured neighbours.
-  if (r.placements.length) {
+  // and thick enough to read clearly against same-coloured neighbours. When
+  // focusing, only outline the highlighted type so it stands out cleanly.
+  const outlineSrc = focusing
+    ? r.placements.filter((p) => p.item_id === focusType)
+    : r.placements;
+  if (outlineSrc.length) {
     traces.push(edgeTrace(
-      r.placements.map((p) => ({ pos: p.position, size: p.orientation })),
+      outlineSrc.map((p) => ({ pos: p.position, size: p.orientation })),
       "#15171c", 3.5));
   }
-  // free voids — slate, translucent, dashed
+  // free voids — slate, translucent fill + clear dashed outlines
   if (showFree) {
     for (const v of r.free_spaces) {
       const [x, y, z] = v.origin, [l, w, h] = v.size;
       traces.push(cuboidMesh(x, y, z, l, w, h, {
-        color: "#8c93a0", opacity: 0.12,
+        color: "#8c93a0", opacity: FREE_FILL_OPACITY,
         hover: `Void<br>${fmt(v.size)}<br>@ (${fmt(v.origin)})<br>vol ${+v.volume.toFixed(2)}`,
       }));
     }
     traces.push(edgeTrace(
       r.free_spaces.map((v) => ({ pos: v.origin, size: v.size })),
-      "#7b8290", 1.5, "dash"));
+      FREE_EDGE_COLOR, FREE_EDGE_WIDTH, "dash"));
   }
   return traces;
 }
@@ -182,16 +195,20 @@ function fillResults(r) {
   $("scene-sub").textContent =
     `${fmt(s.box)} · ${s.placed_count} of ${totalReq} items placed`;
 
-  // legend overlay
+  // legend overlay — click a row to highlight that type (others go transparent)
   const lg = $("legend-items"); lg.innerHTML = "";
   for (const t of r.per_type) {
     const row = document.createElement("div");
     row.className = "legend-row";
+    row.dataset.type = t.id;
+    row.title = "Click to highlight this type";
     row.innerHTML = `<span class="swatch" style="background:${t.color}"></span>
       <span class="lg-id">Type ${t.id}</span>
       <span class="lg-size">${fmt(t.size)}</span>`;
+    row.addEventListener("click", () => toggleFocus(t.id));
     lg.appendChild(row);
   }
+  applyLegendFocus();
   $("legend").hidden = r.per_type.length === 0;
 
   // inspector: type cards
@@ -247,6 +264,20 @@ function fillResults(r) {
 }
 function escapeHtml(s) { return s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
 
+// Legend focus: click a type to highlight it; click it again to show all.
+function toggleFocus(id) {
+  focusType = focusType === id ? null : id;
+  applyLegendFocus();
+  if (lastResult) render(lastResult);
+}
+function applyLegendFocus() {
+  document.querySelectorAll("#legend-items .legend-row").forEach((row) => {
+    const active = focusType === null || row.dataset.type === focusType;
+    row.classList.toggle("dim", !active);
+    row.classList.toggle("active", focusType !== null && active);
+  });
+}
+
 function updateBoxVol() {
   const v = (+$("box-l").value) * (+$("box-w").value) * (+$("box-h").value);
   $("box-vol").textContent = Number.isFinite(v) && v > 0 ? num(v) : "—";
@@ -264,6 +295,7 @@ async function pack() {
     const data = await res.json();
     if (!data.ok) { showError(data.error || "Packing failed."); return; }
     lastResult = data;
+    focusType = null;   // fresh result shows every type
     $("placeholder").hidden = true;
     $("btn-png").disabled = false;
     $("btn-report").disabled = false;
@@ -284,6 +316,7 @@ function showError(msg) {
 // Return the scene + panels to the empty state (no result shown).
 function clearResults() {
   lastResult = null;
+  focusType = null;
   $("btn-png").disabled = true;
   $("btn-report").disabled = true;
   $("legend").hidden = true;
