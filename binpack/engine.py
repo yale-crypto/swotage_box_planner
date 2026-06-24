@@ -19,6 +19,9 @@ type can slot into voids a larger type left behind.
 
 from __future__ import annotations
 
+import random
+from dataclasses import dataclass
+
 from .geometry import BoxRegion, fmt_triple, prune_regions
 from .models import Box, Dimensions, Item, Placement, Result
 
@@ -26,27 +29,96 @@ from .models import Box, Dimensions, Item, Placement, Result
 Score = tuple[float, float, float, float, float, float]
 
 
+@dataclass
+class _Attempt:
+    """The outcome of one greedy pass over a particular unit ordering."""
+    placed: int                      # how many units were placed
+    used: float                      # total placed volume (tie-breaker)
+    placements: list[Placement]
+    packed: dict[str, int]
+    free_spaces: list[BoxRegion]
+    log: list[str]
+
+
 class PackingEngine:
     def __init__(self, box: Box, items: list[Item]) -> None:
         self.box = box
         self.items = items
 
+    # Multi-start search budget. A fixed seed keeps results reproducible.
+    _MAX_RANDOM_STARTS: int = 400
+    _RANDOM_SEED: int = 20240624
+
     # ── Public API ────────────────────────────────────────────────────────────
     def pack_all_items(self) -> Result:
-        """Pack every requested unit and return a full :class:`Result`."""
-        units: list[Item] = []
+        """
+        Pack every requested unit and return the best :class:`Result` found.
+
+        A single greedy pass is order-sensitive (largest-first can strand a
+        small item in a thin leftover slab even when a valid full packing
+        exists). So we run the greedy packer over several candidate orderings —
+        a few deterministic ones plus seeded random restarts — and keep the
+        arrangement that places the most units. The deterministic largest-first
+        order is tried first, so the result is never worse than the old
+        single-pass behaviour, and we stop early the moment every unit fits.
+        """
+        base: list[Item] = []
         for item in self.items:
-            units.extend([item] * item.quantity)
-        # Largest items first. Stable sort keeps same-type units grouped.
-        units.sort(key=lambda it: it.volume, reverse=True)
+            base.extend([item] * item.quantity)
+        total = len(base)
+
+        requested = {it.id: it.quantity for it in self.items}
+        sizes: dict[str, Dimensions] = {it.id: it.dimensions for it in self.items}
+
+        best: _Attempt | None = None
+        for order in self._candidate_orders(base):
+            attempt = self._pack_once(order)
+            if best is None or (attempt.placed, attempt.used) > (best.placed, best.used):
+                best = attempt
+            if best.placed == total:
+                break  # every unit placed — cannot do better
+
+        assert best is not None  # _candidate_orders always yields ≥ 1 ordering
+        self.box.free_spaces = best.free_spaces  # leave the winning partition
+        return Result(
+            box=self.box,
+            placements=best.placements,
+            requested=requested,
+            packed=best.packed,
+            sizes=sizes,
+            free_spaces=best.free_spaces,
+            log=best.log,
+        )
+
+    def _candidate_orders(self, base: list[Item]):
+        """Yield unit orderings to try, cheapest/most-promising first (lazy)."""
+        # Deterministic orders. Largest-volume-first is first → never worse than
+        # the previous single-pass engine.
+        yield sorted(base, key=lambda it: it.volume, reverse=True)
+        yield sorted(base, key=lambda it: max(it.dimensions), reverse=True)
+        yield sorted(base, key=lambda it: min(it.dimensions), reverse=True)
+        yield sorted(base, key=lambda it: it.volume)            # smallest-first
+
+        # Seeded random restarts, capped so runtime stays bounded on big inputs.
+        total = max(1, len(base))
+        n_random = min(self._MAX_RANDOM_STARTS, max(20, 6000 // total))
+        rng = random.Random(self._RANDOM_SEED)
+        for _ in range(n_random):
+            shuffled = base[:]
+            rng.shuffle(shuffled)
+            yield shuffled
+
+    def _pack_once(self, order: list[Item]) -> _Attempt:
+        """Run one greedy pass over ``order`` on a fresh free-space partition."""
+        l, w, h = self.box.dimensions
+        self.box.free_spaces = [BoxRegion(0.0, 0.0, 0.0, l, w, h)]
 
         placements: list[Placement] = []
-        packed: dict[str, int] = {it.id: 0 for it in self.items}
-        requested: dict[str, int] = {it.id: it.quantity for it in self.items}
-        sizes: dict[str, Dimensions] = {it.id: it.dimensions for it in self.items}
+        packed = {it.id: 0 for it in self.items}
         log: list[str] = []
+        used = 0.0
 
-        for step, item in enumerate(units, start=1):
+        for step, item in enumerate(order, start=1):
             placement = self.try_place_item(item)
             if placement is None:
                 log.append(
@@ -54,9 +126,10 @@ class PackingEngine:
                     f"— no free region can hold it (space fragmented)"
                 )
                 continue
-
             placements.append(placement)
             packed[item.id] += 1
+            ol, ow, oh = placement.orientation
+            used += ol * ow * oh
             self.update_free_spaces(placement.as_region())
             px, py, pz = placement.position
             log.append(
@@ -64,13 +137,12 @@ class PackingEngine:
                 f"at ({px:g},{py:g},{pz:g})  ·  used region {placement.region_used}"
             )
 
-        return Result(
-            box=self.box,
+        return _Attempt(
+            placed=len(placements),
+            used=used,
             placements=placements,
-            requested=requested,
             packed=packed,
-            sizes=sizes,
-            free_spaces=self.box.free_spaces,
+            free_spaces=list(self.box.free_spaces),
             log=log,
         )
 
