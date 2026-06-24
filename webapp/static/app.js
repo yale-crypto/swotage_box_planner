@@ -311,6 +311,34 @@ function savePlan() {
   const plan = { problem: collectProblem(), result: lastResult || null };
   download(JSON.stringify(plan, null, 2), "stowage-plan.json", "application/json");
 }
+
+// Load a previously saved plan (same JSON shape savePlan produces) and re-pack.
+function importPlan(file) {
+  const reader = new FileReader();
+  reader.onerror = () => showError("Couldn't read that file.");
+  reader.onload = () => {
+    let data;
+    try {
+      data = JSON.parse(reader.result);
+    } catch (e) {
+      showError("That file isn't valid JSON.");
+      return;
+    }
+    const problem = data && (data.problem || data);   // accept {problem,…} or a bare problem
+    if (!problem || !problem.box || !Array.isArray(problem.items) || !problem.items.length) {
+      showError("Plan JSON needs a 'box' and a non-empty 'items' list.");
+      return;
+    }
+    loadProblem({
+      box: { l: problem.box.l, w: problem.box.w, h: problem.box.h },
+      items: problem.items.map((it) => ({ l: it.l, w: it.w, h: it.h, qty: it.qty ?? 1 })),
+    });
+    updateBoxVol();
+    showError(null);
+    pack();   // recompute from the imported inputs (always consistent)
+  };
+  reader.readAsText(file);
+}
 function download(content, name, type) {
   const url = URL.createObjectURL(new Blob([content], { type }));
   const a = document.createElement("a");
@@ -330,6 +358,12 @@ function init() {
   $("btn-pack").addEventListener("click", pack);
   $("btn-reset").addEventListener("click", () => { loadProblem(BLANK); updateBoxVol(); clearResults(); });
   $("btn-save").addEventListener("click", savePlan);
+  $("btn-import").addEventListener("click", () => $("file-import").click());
+  $("file-import").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (file) importPlan(file);
+    e.target.value = "";   // allow re-importing the same file
+  });
   $("btn-png").addEventListener("click", exportPng);
   $("btn-report").addEventListener("click", downloadReport);
   $("btn-resetview").addEventListener("click", resetView);
