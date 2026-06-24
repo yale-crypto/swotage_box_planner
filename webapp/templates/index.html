@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Stowage · Container load planning</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" />
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <div class="app">
+
+    <!-- ── Header ───────────────────────────────────────────── -->
+    <header class="header">
+      <div class="brand">
+        <svg width="26" height="28" viewBox="0 0 28 30" aria-hidden="true">
+          <polygon points="14,3 25,9 14,15 3,9" fill="#cdd8f5"></polygon>
+          <polygon points="3,9 14,15 14,27 3,21" fill="#6f8fe8"></polygon>
+          <polygon points="14,15 25,9 25,21 14,27" fill="#3360d8"></polygon>
+        </svg>
+        <div class="brand-text">
+          <span class="brand-name">STOWAGE</span>
+          <span class="brand-sub">Container load planning</span>
+        </div>
+      </div>
+      <div class="header-actions">
+        <div class="strategy"><span class="dot"></span>Strategy · Deepest-Bottom-Left</div>
+        <button id="btn-reset" class="btn ghost" type="button">Reset</button>
+        <button id="btn-save" class="btn accent-outline" type="button">Save plan</button>
+      </div>
+    </header>
+
+    <div class="body">
+
+      <!-- ── Left rail: configuration ───────────────────────── -->
+      <aside class="rail rail-left">
+        <div class="section section-bordered">
+          <h2 class="section-title">Container</h2>
+          <p class="section-desc">Inner dimensions of the shipping box.</p>
+          <div class="dim-row">
+            <label class="dim-field">
+              <span class="dim-label">Length</span>
+              <input id="box-l" class="num" type="number" min="0.01" step="any" value="12" />
+            </label>
+            <span class="dim-x">×</span>
+            <label class="dim-field">
+              <span class="dim-label">Width</span>
+              <input id="box-w" class="num" type="number" min="0.01" step="any" value="10" />
+            </label>
+            <span class="dim-x">×</span>
+            <label class="dim-field">
+              <span class="dim-label">Height</span>
+              <input id="box-h" class="num" type="number" min="0.01" step="any" value="9" />
+            </label>
+          </div>
+          <div class="volrow">
+            <span>Box volume</span>
+            <span id="box-vol" class="mono semibold">—</span>
+          </div>
+        </div>
+
+        <div class="section section-grow">
+          <div class="section-head">
+            <h2 class="section-title">Item types</h2>
+            <button id="btn-add" class="btn small" type="button">+ Add type</button>
+          </div>
+          <div class="items-head">
+            <span></span><span>L</span><span>W</span><span>H</span><span>Qty</span><span></span>
+          </div>
+          <div id="items-body" class="items-body"></div>
+        </div>
+
+        <div class="section section-foot">
+          <button id="btn-pack" class="btn accent block" type="button">Pack items</button>
+          <p id="error" class="error" hidden></p>
+        </div>
+      </aside>
+
+      <!-- ── Center: metrics + scene ────────────────────────── -->
+      <main class="center">
+        <div class="metrics">
+          <div class="metric">
+            <span class="metric-key">Utilisation</span>
+            <span id="m-util" class="metric-val">—</span>
+            <div class="bar"><div id="m-util-bar" class="bar-fill accent-bg" style="width:0%"></div></div>
+          </div>
+          <div class="metric">
+            <span class="metric-key">Items placed</span>
+            <span id="m-placed" class="metric-val">—</span>
+            <span id="m-leftover" class="metric-foot danger">—</span>
+          </div>
+          <div class="metric">
+            <span class="metric-key">Free volume</span>
+            <span id="m-free" class="metric-val">—</span>
+            <span id="m-free-pct" class="metric-foot muted">—</span>
+          </div>
+          <div class="metric">
+            <span class="metric-key">Open voids</span>
+            <span id="m-voids" class="metric-val">—</span>
+            <span class="metric-foot muted">maximal free regions</span>
+          </div>
+        </div>
+
+        <div class="scene-card">
+          <div class="scene-head">
+            <div>
+              <h3 class="scene-title">Packed layout</h3>
+              <p id="scene-sub" class="scene-sub">—</p>
+            </div>
+            <div class="scene-actions">
+              <button id="toggle-free" class="switch-btn" type="button" aria-pressed="true">
+                <span class="track"><span class="knob"></span></span> Free space
+              </button>
+              <span class="divider"></span>
+              <button id="btn-resetview" class="btn small" type="button">Reset view</button>
+              <button id="btn-png" class="btn small" type="button" disabled>Export PNG</button>
+              <button id="btn-report" class="btn small" type="button" disabled>Report</button>
+            </div>
+          </div>
+
+          <div class="scene">
+            <div id="legend" class="legend" hidden>
+              <span class="legend-title">Legend</span>
+              <div id="legend-items"></div>
+            </div>
+            <div class="axes"><span>↗ Length</span><span>→ Width</span><span>↑ Height</span></div>
+            <div id="placeholder" class="placeholder">
+              <p>Set a container and items, then <strong>Pack items</strong>.</p>
+            </div>
+            <div id="plot" class="plot"></div>
+          </div>
+        </div>
+      </main>
+
+      <!-- ── Right rail: inspector ──────────────────────────── -->
+      <aside class="rail rail-right">
+        <div class="inspector-head">
+          <h2 class="section-title">Inspector</h2>
+          <div class="tabs">
+            <button class="tab active" data-tab="types" type="button">Item types</button>
+            <button class="tab" data-tab="voids" type="button">Free space</button>
+            <button class="tab" data-tab="log" type="button">Log</button>
+          </div>
+        </div>
+        <div class="inspector-body">
+          <div class="tab-panel active" data-panel="types"><div id="type-cards" class="stack"></div></div>
+          <div class="tab-panel" data-panel="voids">
+            <p class="hint">Maximal empty cuboids the engine could still fill.</p>
+            <div id="void-cards" class="stack"></div>
+          </div>
+          <div class="tab-panel" data-panel="log"><div id="log-rows" class="log"></div></div>
+        </div>
+      </aside>
+
+    </div>
+  </div>
+
+  <div id="spinner" class="spinner-overlay" hidden><div class="spinner"></div></div>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

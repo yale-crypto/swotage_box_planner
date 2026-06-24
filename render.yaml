@@ -1,0 +1,14 @@
+# Render Blueprint — deploys the Stowage web app as a free web service.
+# Render reads this automatically when you create a Blueprint from the repo.
+services:
+  - type: web
+    name: stowage
+    runtime: python
+    plan: free
+    buildCommand: "pip install -r requirements-web.txt"
+    startCommand: "gunicorn webapp.app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120"
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
