@@ -1,78 +1,30 @@
 from __future__ import annotations
 
 import os
-import time
 from typing import Any
 
-from flask import Flask, Response, g, jsonify, render_template, request
-from itsdangerous import BadSignature, URLSafeSerializer
+from flask import Flask, jsonify, render_template, request
 
 from binpack import Box, Item, PackingEngine, build_report
 
 # Stowage palette — first four match the design's item types A/B/C/D exactly
-# (indigo / teal / orange / purple); the rest extend it for additional types.
+# (indigo / teal / orange / purple); the rest extend it so the first eight
+# types stay clearly distinct from one another.
 ITEM_PALETTE = [
-    "#3360d8", "#11968c", "#d98a2b", "#7556c9", "#2f9e44",
-    "#e8590c", "#c2255c", "#1098ad", "#5c7cfa", "#f08c00",
+    "#3360d8",  # blue
+    "#11968c",  # teal
+    "#d98a2b",  # orange
+    "#7556c9",  # purple
+    "#2f9e44",  # green
+    "#e03131",  # red
+    "#15aabf",  # cyan
+    "#e64980",  # pink
+    "#9c6644",  # brown
+    "#f59f00",  # gold
 ]
 FREE_COLOR = "#8c93a0"  # uniform slate for void regions (Stowage style)
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "dev-stowage-secret-change-me")
-
-# ── Very simple auth ─────────────────────────────────────────────────────────
-# Browser-native HTTP Basic Auth (no login UI). A signed cookie carries the
-# per-user session so we can give each account a different expiry.
-USERS = {
-    "admin": {"password": "admin", "ttl": None},   # no expiry
-    "yash":  {"password": "yash",  "ttl": 600},     # 10-minute session
-}
-_signer = URLSafeSerializer(app.secret_key, salt="stowage-auth")
-_COOKIE = "stw_session"
-
-
-def _verify_token(token: str) -> dict | None:
-    try:
-        data = _signer.loads(token)
-    except BadSignature:
-        return None
-    exp = data.get("exp")
-    if exp is not None and time.time() > exp:
-        return None
-    return data
-
-
-@app.before_request
-def _require_auth() -> Response | None:
-    # 1. Valid session cookie?
-    token = request.cookies.get(_COOKIE)
-    if token and (data := _verify_token(token)) is not None:
-        g.auth_user = data["u"]
-        return None
-
-    # 2. Valid Basic Auth credentials? Mint a fresh session cookie.
-    cred = request.authorization
-    if cred and cred.username in USERS and USERS[cred.username]["password"] == cred.password:
-        ttl = USERS[cred.username]["ttl"]
-        exp = time.time() + ttl if ttl is not None else None
-        g.auth_user = cred.username
-        g.new_token = (_signer.dumps({"u": cred.username, "exp": exp}), ttl)
-        return None
-
-    # 3. Challenge — triggers the browser's native login dialog.
-    return Response(
-        "Authentication required.", 401,
-        {"WWW-Authenticate": 'Basic realm="Stowage"'},
-    )
-
-
-@app.after_request
-def _set_session(resp: Response) -> Response:
-    pending = getattr(g, "new_token", None)
-    if pending is not None:
-        token, ttl = pending
-        resp.set_cookie(_COOKIE, token, max_age=ttl, httponly=True, samesite="Lax")
-    return resp
 
 
 @app.get("/")

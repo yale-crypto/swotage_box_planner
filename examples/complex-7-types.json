@@ -1,0 +1,15 @@
+{
+  "_note": "Stowage sample plan — 7 item types with varied shapes. Import via the 'Import' button to exercise packing, the colour legend, and the free-space voids.",
+  "problem": {
+    "box": { "l": 10, "w": 10, "h": 8 },
+    "items": [
+      { "id": "A", "l": 3, "w": 3, "h": 3, "qty": 4 },
+      { "id": "B", "l": 6, "w": 5, "h": 1, "qty": 5 },
+      { "id": "C", "l": 2, "w": 2, "h": 7, "qty": 4 },
+      { "id": "D", "l": 8, "w": 1, "h": 1, "qty": 6 },
+      { "id": "E", "l": 5, "w": 4, "h": 2, "qty": 4 },
+      { "id": "F", "l": 2, "w": 2, "h": 2, "qty": 8 },
+      { "id": "G", "l": 4, "w": 4, "h": 4, "qty": 3 }
+    ]
+  }
+}

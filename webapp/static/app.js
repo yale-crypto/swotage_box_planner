@@ -42,8 +42,9 @@ function rowTemplate(item = { l: "", w: "", h: "", qty: 1 }) {
 function addRow(item) { $("items-body").appendChild(rowTemplate(item)); recolorRows(); }
 
 // Preview swatches mirror the backend palette order.
+// Must stay in the same order as ITEM_PALETTE in webapp/app.py.
 const PALETTE = ["#3360d8", "#11968c", "#d98a2b", "#7556c9", "#2f9e44",
-                 "#e8590c", "#c2255c", "#1098ad", "#5c7cfa", "#f08c00"];
+                 "#e03131", "#15aabf", "#e64980", "#9c6644", "#f59f00"];
 function recolorRows() {
   [...$("items-body").children].forEach((row, i) => {
     row.querySelector(".swatch").style.background = PALETTE[i % PALETTE.length];
