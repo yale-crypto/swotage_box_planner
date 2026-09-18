@@ -30,13 +30,12 @@ const FREE_EDGE_WIDTH = 2.4;
 // multiple of the pad per axis — chosen so the call-out lands on a face the
 // default camera is looking at rather than behind the load.
 const AXIS_META = {
-  l: { i: 0, name: "Length", input: "box-l", push: [0, 1, 0], textpos: "middle center" },
-  w: { i: 1, name: "Width",  input: "box-w", push: [1, 0, 0], textpos: "middle center" },
-  // the vertical call-out runs alongside the box, so its label reads outward
-  h: { i: 2, name: "Height", input: "box-h", push: [1, 0, 0], textpos: "middle left" },
+  l: { i: 0, name: "Length", input: "box-l", push: [0, 1, 0] },
+  w: { i: 1, name: "Width",  input: "box-w", push: [1, 0, 0] },
+  h: { i: 2, name: "Height", input: "box-h", push: [1, 0, 0] },
 };
 const AXIS_COLOR = "#3360d8";
-const AXIS_EDGE_WIDTH = 9;
+const AXIS_EDGE_WIDTH = 4;     // enough to pick out an edge, not enough to shout
 const AXIS_PAD = 0.11;        // call-out offset, as a fraction of the longest side
 
 const $ = (id) => document.getElementById(id);
@@ -177,8 +176,7 @@ const axisPad = (box) => AXIS_PAD * Math.max(...box);
      · all four container edges running along that axis — shows the direction,
        but translucent voids and items can sit in front of them;
      · a dimension line carried outside the box on extension lines, the way a
-       drawing marks a measurement — never occluded by the load, and it carries
-       the number.  */
+       drawing marks a measurement — never occluded by the load.  */
 function axisHighlight(box) {
   const meta = AXIS_META[focusAxis];
   const i = meta.i, span = box[i], pad = axisPad(box);
@@ -215,20 +213,13 @@ function axisHighlight(box) {
   dseg(corner(p0), p0);         // extension lines back to the box corners
   dseg(corner(p1), p1);
 
-  // label rides just beyond the dimension line, at its midpoint
-  const at = p0.map((v, k) => (v + p1[k]) / 2 + (meta.push[k] ? pad * 0.85 : 0));
-
   return [
     { type: "scatter3d", mode: "lines", x: X, y: Y, z: Z,
       line: { color: AXIS_COLOR, width: AXIS_EDGE_WIDTH },
       hoverinfo: "skip", showlegend: false },
     { type: "scatter3d", mode: "lines+markers", x: DX, y: DY, z: DZ,
-      line: { color: AXIS_COLOR, width: 6 },
-      marker: { color: AXIS_COLOR, size: 4 },
-      hoverinfo: "skip", showlegend: false },
-    { type: "scatter3d", mode: "text", x: [at[0]], y: [at[1]], z: [at[2]],
-      text: [`${meta.name} ${num(span)}`], textposition: meta.textpos,
-      textfont: { size: 20, color: AXIS_COLOR, family: "IBM Plex Mono" },
+      line: { color: AXIS_COLOR, width: 2.5 },
+      marker: { color: AXIS_COLOR, size: 2.5 },
       hoverinfo: "skip", showlegend: false },
   ];
 }
@@ -249,7 +240,7 @@ function render(r) {
   const [bl, bw, bh] = r.summary.box;
   // Widen the ranges the call-out is pushed into; Plotly clips to the range cube.
   const push = focusAxis ? AXIS_META[focusAxis].push : [0, 0, 0];
-  const lim = [bl, bw, bh].map((v, k) => (push[k] ? v + axisPad([bl, bw, bh]) * 2.4 : v));
+  const lim = [bl, bw, bh].map((v, k) => (push[k] ? v + axisPad([bl, bw, bh]) * 1.5 : v));
   const layout = {
     paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
     margin: { l: 0, r: 0, t: 0, b: 0 }, showlegend: false,
