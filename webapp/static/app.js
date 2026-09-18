@@ -276,8 +276,13 @@ function fillResults(r) {
   $("m-free-pct").textContent = freePct + "% of container";
   $("m-voids").textContent = r.free_spaces.length;
 
+  // A truncated search still produced a valid packing — say so rather than
+  // letting a result that could have been better look definitive.
+  const cut = r.search && r.search.truncated
+    ? ` · search stopped at ${r.search.budget_s}s`
+    : "";
   $("scene-sub").textContent =
-    `${fmt(s.box)} · ${s.placed_count} of ${totalReq} items placed`;
+    `${fmt(s.box)} · ${s.placed_count} of ${totalReq} items placed${cut}`;
 
   // legend overlay — click a row to highlight that type (others go transparent)
   const lg = $("legend-items"); lg.innerHTML = "";

@@ -6,9 +6,21 @@ services:
     runtime: python
     plan: free
     buildCommand: "pip install -r requirements-web.txt"
-    startCommand: "gunicorn webapp.app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120"
+    startCommand: "gunicorn webapp.app:app -c gunicorn.conf.py"
     healthCheckPath: /
     autoDeploy: true
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.7"
+      # The free plan grants a fraction of a core, so one worker per reported
+      # core would only make them contend. Raise this with the instance size.
+      - key: WEB_CONCURRENCY
+        value: "2"
+      # Render terminates TLS and forwards one hop; without this every client
+      # shares the proxy's address and so a single rate-limit bucket.
+      - key: TRUST_PROXY_HOPS
+        value: "1"
+      # Seconds of search per request. Lower it if the free plan's CPU share
+      # makes packs feel slow; the answer degrades gracefully.
+      - key: PACK_TIME_BUDGET_S
+        value: "5"

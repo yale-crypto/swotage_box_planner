@@ -20,6 +20,7 @@ type can slot into voids a larger type left behind.
 from __future__ import annotations
 
 import random
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from itertools import cycle
@@ -46,9 +47,20 @@ class _Attempt:
 
 
 class PackingEngine:
-    def __init__(self, box: Box, items: list[Item]) -> None:
+    def __init__(self, box: Box, items: list[Item], time_budget: float | None = None) -> None:
+        """
+        ``time_budget`` caps the *search*, in seconds, not the packing itself.
+
+        The multi-start search keeps the best arrangement it has found so far,
+        so cutting it short degrades the answer rather than failing: the first
+        plan always runs to completion, and each further plan is only started
+        if there is budget left for it. Callers that serve requests should set
+        one — a problem whose items do not all fit will otherwise run every
+        plan, which grows steeply with the unit count. ``None`` means no limit.
+        """
         self.box = box
         self.items = items
+        self.time_budget = time_budget
 
     # Multi-start search budget. A fixed seed keeps results reproducible.
     _MAX_RANDOM_STARTS: int = 400
@@ -79,8 +91,17 @@ class PackingEngine:
         requested = {it.id: it.quantity for it in self.items}
         sizes: dict[str, Dimensions] = {it.id: it.dimensions for it in self.items}
 
+        deadline = (
+            time.monotonic() + self.time_budget if self.time_budget is not None else None
+        )
         best: _Attempt | None = None
+        truncated = False
         for order, strategy in self._candidate_plans(base):
+            # The first plan always runs; later ones only while budget remains,
+            # so there is always a result to return.
+            if best is not None and deadline is not None and time.monotonic() >= deadline:
+                truncated = True
+                break
             attempt = self._pack_once(order, strategy)
             if best is None or (attempt.placed, attempt.used) > (best.placed, best.used):
                 best = attempt
@@ -97,6 +118,7 @@ class PackingEngine:
             sizes=sizes,
             free_spaces=best.free_spaces,
             log=best.log,
+            search_truncated=truncated,
         )
 
     def _candidate_plans(

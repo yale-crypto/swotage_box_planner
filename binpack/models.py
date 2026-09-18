@@ -107,6 +107,9 @@ class Result:
     sizes: dict[str, Dimensions]
     free_spaces: list[BoxRegion]
     log: list[str]
+    # True when the search hit its time budget before exhausting its plans. The
+    # packing is still valid — just the best of fewer attempts than usual.
+    search_truncated: bool = False
 
     @property
     def used_volume(self) -> float:
