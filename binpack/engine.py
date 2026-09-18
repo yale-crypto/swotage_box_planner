@@ -6,7 +6,7 @@ Strategy: greedy placement over a list of *maximal free spaces*.
   1. Free space starts as one region: the whole box.
   2. Items are expanded into individual units and sorted largest-volume first.
   3. Each unit is placed by searching every (free region × orientation) pair and
-     scoring each candidate (see ``_score``). The best candidate wins.
+     scoring each candidate (see ``_STRATEGIES``). The best candidate wins.
   4. When an item is placed, EVERY free region it overlaps is carved up via
      ``split_after_placement`` (up to 6 new regions each), then the list is
      pruned of regions contained in others.
@@ -20,13 +20,18 @@ type can slot into voids a larger type left behind.
 from __future__ import annotations
 
 import random
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from itertools import cycle
 
 from .geometry import BoxRegion, fmt_triple, prune_regions
 from .models import Box, Dimensions, Item, Placement, Result
 
 # A score is compared lexicographically; smaller is better.
 Score = tuple[float, float, float, float, float, float]
+
+# A placement heuristic: rank one (free region, orientation) candidate.
+Strategy = Callable[["BoxRegion", "Dimensions"], Score]
 
 
 @dataclass
@@ -54,13 +59,17 @@ class PackingEngine:
         """
         Pack every requested unit and return the best :class:`Result` found.
 
-        A single greedy pass is order-sensitive (largest-first can strand a
-        small item in a thin leftover slab even when a valid full packing
-        exists). So we run the greedy packer over several candidate orderings —
-        a few deterministic ones plus seeded random restarts — and keep the
-        arrangement that places the most units. The deterministic largest-first
-        order is tried first, so the result is never worse than the old
-        single-pass behaviour, and we stop early the moment every unit fits.
+        A single greedy pass is sensitive both to unit *order* (largest-first
+        can strand a small item in a thin leftover slab) and to the *placement
+        heuristic* — laying every item as flat as it will go wastes the box's
+        height, and re-ordering identical units cannot undo that. So we run the
+        greedy packer over several candidate plans: each unit ordering (a few
+        deterministic ones plus seeded random restarts) paired with a placement
+        strategy, keeping the arrangement that places the most units.
+
+        Largest-first + the flat-lay strategy is tried first, so the result is
+        never worse than the old single-pass behaviour, and we stop early the
+        moment every unit fits.
         """
         base: list[Item] = []
         for item in self.items:
@@ -71,14 +80,14 @@ class PackingEngine:
         sizes: dict[str, Dimensions] = {it.id: it.dimensions for it in self.items}
 
         best: _Attempt | None = None
-        for order in self._candidate_orders(base):
-            attempt = self._pack_once(order)
+        for order, strategy in self._candidate_plans(base):
+            attempt = self._pack_once(order, strategy)
             if best is None or (attempt.placed, attempt.used) > (best.placed, best.used):
                 best = attempt
             if best.placed == total:
                 break  # every unit placed — cannot do better
 
-        assert best is not None  # _candidate_orders always yields ≥ 1 ordering
+        assert best is not None  # _candidate_plans always yields ≥ 1 plan
         self.box.free_spaces = best.free_spaces  # leave the winning partition
         return Result(
             box=self.box,
@@ -90,25 +99,61 @@ class PackingEngine:
             log=best.log,
         )
 
-    def _candidate_orders(self, base: list[Item]):
-        """Yield unit orderings to try, cheapest/most-promising first (lazy)."""
-        # Deterministic orders. Largest-volume-first is first → never worse than
-        # the previous single-pass engine.
-        yield sorted(base, key=lambda it: it.volume, reverse=True)
-        yield sorted(base, key=lambda it: max(it.dimensions), reverse=True)
-        yield sorted(base, key=lambda it: min(it.dimensions), reverse=True)
-        yield sorted(base, key=lambda it: it.volume)            # smallest-first
+    def _candidate_plans(
+        self, base: list[Item]
+    ) -> Iterator[tuple[list[Item], Strategy]]:
+        """
+        Yield (ordering, strategy) plans to try, most-promising first (lazy).
 
-        # Seeded random restarts, capped so runtime stays bounded on big inputs.
+        Plans are de-duplicated — one ordering under one strategy is a
+        deterministic pass, so repeating it can only repeat its result. That
+        matters most when the units are identical and every reshuffle collides.
+        """
+        default, *others = self._STRATEGIES
+        seen: set[tuple] = set()
+
+        def is_new(order: list[Item], strategy: Strategy) -> bool:
+            key = (tuple((it.id, it.dimensions) for it in order), strategy)
+            if key in seen:
+                return False
+            seen.add(key)
+            return True
+
+        def plan(order: list[Item], strategy: Strategy):
+            return [(order, strategy)] if is_new(order, strategy) else []
+
+        # 1. Deterministic orders, each under every strategy. Largest-volume
+        #    first + flat-lay is first → never worse than a single old pass.
+        deterministic = [
+            sorted(base, key=lambda it: it.volume, reverse=True),
+            sorted(base, key=lambda it: max(it.dimensions), reverse=True),
+            sorted(base, key=lambda it: min(it.dimensions), reverse=True),
+            sorted(base, key=lambda it: it.volume),              # smallest-first
+        ]
+        for order in deterministic:
+            for strategy in self._STRATEGIES:
+                yield from plan(order, strategy)
+
+        # 2. Seeded random restarts under the default strategy — the previous
+        #    engine's search, same seed and count, so we reproduce whatever it
+        #    found and can only improve on it.
         total = max(1, len(base))
         n_random = min(self._MAX_RANDOM_STARTS, max(20, 6000 // total))
         rng = random.Random(self._RANDOM_SEED)
+        shuffles: list[list[Item]] = []
         for _ in range(n_random):
             shuffled = base[:]
             rng.shuffle(shuffled)
-            yield shuffled
+            shuffles.append(shuffled)
+            yield from plan(shuffled, default)
 
-    def _pack_once(self, order: list[Item]) -> _Attempt:
+        # 3. Only if that still left units unplaced: revisit the first half of
+        #    those restarts under the other strategies, one apiece, so the extra
+        #    work is bounded well under a second full sweep.
+        for strategy, shuffled in zip(cycle(others), shuffles[: n_random // 2]):
+            yield from plan(shuffled, strategy)
+
+    def _pack_once(self, order: list[Item], strategy: Strategy) -> _Attempt:
         """Run one greedy pass over ``order`` on a fresh free-space partition."""
         l, w, h = self.box.dimensions
         self.box.free_spaces = [BoxRegion(0.0, 0.0, 0.0, l, w, h)]
@@ -119,7 +164,7 @@ class PackingEngine:
         used = 0.0
 
         for step, item in enumerate(order, start=1):
-            placement = self.try_place_item(item)
+            placement = self.try_place_item(item, strategy)
             if placement is None:
                 log.append(
                     f"[{step:>3}] SKIP  {item.id} {fmt_triple(item.dimensions)} "
@@ -146,8 +191,11 @@ class PackingEngine:
             log=log,
         )
 
-    def try_place_item(self, item: Item) -> Placement | None:
+    def try_place_item(
+        self, item: Item, strategy: Strategy | None = None
+    ) -> Placement | None:
         """Find the best (region, orientation) for one unit; ``None`` if none fit."""
+        score_fn = strategy or self._score_flat
         best: tuple[BoxRegion, Dimensions] | None = None
         best_score: Score | None = None
 
@@ -155,7 +203,7 @@ class PackingEngine:
             for orientation in item.orientations():
                 if not region.can_fit(orientation):
                     continue
-                score = self._score(region, orientation)
+                score = score_fn(region, orientation)
                 if best_score is None or score < best_score:
                     best_score = score
                     best = (region, orientation)
@@ -181,9 +229,15 @@ class PackingEngine:
                 rebuilt.append(region)
         self.box.free_spaces = prune_regions(rebuilt)
 
-    # ── Heuristic ─────────────────────────────────────────────────────────────
+    # ── Heuristics ────────────────────────────────────────────────────────────
+    # Each strategy scores one (free region, orientation) candidate; lower wins.
+    # Both share the same first four terms — Deepest-Bottom-Left plus best-fit —
+    # and differ only in how they pose the item, because no single pose suits
+    # every box: flat-lay fills wide shallow boxes, upright fills tall ones (two
+    # 6×5×4 items fit an 8×8×6 box only standing on end).
+
     @staticmethod
-    def _score(region: BoxRegion, orientation: Dimensions) -> Score:
+    def _score_flat(region: BoxRegion, orientation: Dimensions) -> Score:
         """
         Lower is better. Encodes "maximise immediate fit + future usable space":
 
@@ -198,3 +252,16 @@ class PackingEngine:
         """
         l, w, h = orientation
         return (region.z, region.y, region.x, region.volume, h, -(l * w))
+
+    @staticmethod
+    def _score_upright(region: BoxRegion, orientation: Dimensions) -> Score:
+        """
+        As :meth:`_score_flat`, but stand the item up: greatest height, then
+        smallest footprint. Trades floor area for headroom, which wins whenever
+        two items can sit side by side only when both are on end.
+        """
+        l, w, h = orientation
+        return (region.z, region.y, region.x, region.volume, -h, l * w)
+
+    # Order matters: the first is tried first, so flat-lay stays the default.
+    _STRATEGIES: tuple[Strategy, ...] = (_score_flat, _score_upright)
