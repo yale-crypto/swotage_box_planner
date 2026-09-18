@@ -16,12 +16,28 @@ const BLANK = {
 let lastResult = null;
 let showFree = true;
 let focusType = null;   // legend selection: id of the type to highlight, or null for all
+let focusAxis = null;   // "l" | "w" | "h" — dimension to call out in the scene, or null
 
 // Free-space (void) styling — translucent fill so items stay visible through it,
 // with clear dashed outlines so each void is easy to pick out. Tweak to taste.
 const FREE_FILL_OPACITY = 0.18;
 const FREE_EDGE_COLOR = "#5f6b7d";
 const FREE_EDGE_WIDTH = 2.4;
+
+// Axis call-out styling. The highlight rides the container's own edges, so it
+// reads as a measurement of the box rather than another item in the scene.
+// `push` is the direction the dimension line is carried outside the box, as a
+// multiple of the pad per axis — chosen so the call-out lands on a face the
+// default camera is looking at rather than behind the load.
+const AXIS_META = {
+  l: { i: 0, name: "Length", input: "box-l", push: [0, 1, 0], textpos: "middle center" },
+  w: { i: 1, name: "Width",  input: "box-w", push: [1, 0, 0], textpos: "middle center" },
+  // the vertical call-out runs alongside the box, so its label reads outward
+  h: { i: 2, name: "Height", input: "box-h", push: [1, 0, 0], textpos: "middle left" },
+};
+const AXIS_COLOR = "#3360d8";
+const AXIS_EDGE_WIDTH = 9;
+const AXIS_PAD = 0.11;        // call-out offset, as a fraction of the longest side
 
 const $ = (id) => document.getElementById(id);
 
@@ -110,8 +126,10 @@ function buildTraces(r) {
   const traces = [];
   const [bl, bw, bh] = r.summary.box;
 
-  // container wireframe
-  traces.push(edgeTrace([{ pos: [0, 0, 0], size: [bl, bw, bh] }], "#a9aaa2", 2.5));
+  // container wireframe — faded while one dimension is called out, so the
+  // highlighted edges are the only strong lines on the box
+  traces.push(edgeTrace([{ pos: [0, 0, 0], size: [bl, bw, bh] }],
+                        focusAxis ? "#d3d2ca" : "#a9aaa2", 2.5));
 
   // solid items — when a legend type is focused, the others go transparent
   const focusing = focusType !== null;
@@ -147,26 +165,100 @@ function buildTraces(r) {
       r.free_spaces.map((v) => ({ pos: v.origin, size: v.size })),
       FREE_EDGE_COLOR, FREE_EDGE_WIDTH, "dash"));
   }
+  if (focusAxis) traces.push(...axisHighlight(r.summary.box));
   return traces;
 }
-function axis(title, max) {
+
+const axisPad = (box) => AXIS_PAD * Math.max(...box);
+
+/* Call out the focused dimension two ways, because each covers the other's
+   blind spot:
+
+     · all four container edges running along that axis — shows the direction,
+       but translucent voids and items can sit in front of them;
+     · a dimension line carried outside the box on extension lines, the way a
+       drawing marks a measurement — never occluded by the load, and it carries
+       the number.  */
+function axisHighlight(box) {
+  const meta = AXIS_META[focusAxis];
+  const i = meta.i, span = box[i], pad = axisPad(box);
+  const [a, b] = [0, 1, 2].filter((k) => k !== i);   // the two other axes
+
+  // 1. the four box edges parallel to this axis
+  const X = [], Y = [], Z = [];
+  const seg = (p, q) => {
+    for (const pt of [p, q]) { X.push(pt[0]); Y.push(pt[1]); Z.push(pt[2]); }
+    X.push(null); Y.push(null); Z.push(null);
+  };
+  for (const offA of [0, box[a]]) {
+    for (const offB of [0, box[b]]) {
+      const start = [0, 0, 0];
+      start[a] = offA; start[b] = offB;
+      const end = start.slice();
+      end[i] = span;
+      seg(start, end);
+    }
+  }
+
+  // 2. the dimension line, offset clear of the box, plus its extension lines
+  const base = meta.push.map((m, k) => (m ? box[k] + pad : 0));
+  const p0 = base.slice(), p1 = base.slice();
+  p0[i] = 0; p1[i] = span;
+  const corner = (p) => p.map((v, k) => (meta.push[k] ? box[k] : v));
+
+  const DX = [], DY = [], DZ = [];
+  const dseg = (p, q) => {
+    for (const pt of [p, q]) { DX.push(pt[0]); DY.push(pt[1]); DZ.push(pt[2]); }
+    DX.push(null); DY.push(null); DZ.push(null);
+  };
+  dseg(p0, p1);                 // the measurement itself
+  dseg(corner(p0), p0);         // extension lines back to the box corners
+  dseg(corner(p1), p1);
+
+  // label rides just beyond the dimension line, at its midpoint
+  const at = p0.map((v, k) => (v + p1[k]) / 2 + (meta.push[k] ? pad * 0.85 : 0));
+
+  return [
+    { type: "scatter3d", mode: "lines", x: X, y: Y, z: Z,
+      line: { color: AXIS_COLOR, width: AXIS_EDGE_WIDTH },
+      hoverinfo: "skip", showlegend: false },
+    { type: "scatter3d", mode: "lines+markers", x: DX, y: DY, z: DZ,
+      line: { color: AXIS_COLOR, width: 6 },
+      marker: { color: AXIS_COLOR, size: 4 },
+      hoverinfo: "skip", showlegend: false },
+    { type: "scatter3d", mode: "text", x: [at[0]], y: [at[1]], z: [at[2]],
+      text: [`${meta.name} ${num(span)}`], textposition: meta.textpos,
+      textfont: { size: 20, color: AXIS_COLOR, family: "IBM Plex Mono" },
+      hoverinfo: "skip", showlegend: false },
+  ];
+}
+function axis(title, max, hot, limit) {
   return {
-    title: { text: title, font: { color: "#9a9b93", size: 11, family: "IBM Plex Mono" } },
-    range: [0, max], backgroundcolor: "rgba(0,0,0,0)", gridcolor: "#e4e3dc",
-    zerolinecolor: "#d8d7cf", showbackground: false, color: "#a8a99f",
-    tickfont: { size: 9, color: "#b9b9b0" },
+    title: {
+      text: title,
+      font: { color: hot ? AXIS_COLOR : "#6c6d66", size: hot ? 17 : 15,
+              family: "IBM Plex Mono" },
+    },
+    range: [0, limit ?? max], backgroundcolor: "rgba(0,0,0,0)", gridcolor: "#e4e3dc",
+    zerolinecolor: "#d8d7cf", showbackground: false, color: "#8a8b84",
+    tickfont: { size: hot ? 13 : 12, color: hot ? AXIS_COLOR : "#8a8b84" },
   };
 }
 function render(r) {
   if (typeof Plotly === "undefined") { showError("3-D library failed to load — reload the page."); return; }
   const [bl, bw, bh] = r.summary.box;
+  // Widen the ranges the call-out is pushed into; Plotly clips to the range cube.
+  const push = focusAxis ? AXIS_META[focusAxis].push : [0, 0, 0];
+  const lim = [bl, bw, bh].map((v, k) => (push[k] ? v + axisPad([bl, bw, bh]) * 2.4 : v));
   const layout = {
     paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
     margin: { l: 0, r: 0, t: 0, b: 0 }, showlegend: false,
     font: { family: "IBM Plex Sans" },
     scene: {
       aspectmode: "data",
-      xaxis: axis("Length", bl), yaxis: axis("Width", bw), zaxis: axis("Height", bh),
+      xaxis: axis("Length", bl, focusAxis === "l", lim[0]),
+      yaxis: axis("Width", bw, focusAxis === "w", lim[1]),
+      zaxis: axis("Height", bh, focusAxis === "h", lim[2]),
       camera: { eye: { x: 1.5, y: 1.5, z: 1.05 } },
     },
   };
@@ -279,6 +371,22 @@ function applyLegendFocus() {
   });
 }
 
+// Axis focus: click Length / Width / Height to call that dimension out on the
+// container; click the same one again to clear it.
+function toggleAxis(key) {
+  focusAxis = focusAxis === key ? null : key;
+  applyAxisFocus();
+  if (lastResult) render(lastResult);
+}
+function applyAxisFocus() {
+  document.querySelectorAll("[data-axis]").forEach((el) => {
+    el.setAttribute("aria-pressed", String(el.dataset.axis === focusAxis));
+  });
+  for (const [key, meta] of Object.entries(AXIS_META)) {
+    $(meta.input).classList.toggle("axis-hot", key === focusAxis);
+  }
+}
+
 function updateBoxVol() {
   const v = (+$("box-l").value) * (+$("box-w").value) * (+$("box-h").value);
   $("box-vol").textContent = Number.isFinite(v) && v > 0 ? num(v) : "—";
@@ -318,6 +426,8 @@ function showError(msg) {
 function clearResults() {
   lastResult = null;
   focusType = null;
+  focusAxis = null;
+  applyAxisFocus();
   $("btn-png").disabled = true;
   $("btn-report").disabled = true;
   $("legend").hidden = true;
@@ -403,6 +513,11 @@ function init() {
   $("btn-resetview").addEventListener("click", resetView);
 
   ["box-l", "box-w", "box-h"].forEach((id) => $(id).addEventListener("input", updateBoxVol));
+
+  // Both the container labels and the scene chips drive the same call-out.
+  document.querySelectorAll("[data-axis]").forEach((el) => {
+    el.addEventListener("click", () => toggleAxis(el.dataset.axis));
+  });
 
   $("toggle-free").addEventListener("click", () => {
     showFree = !showFree;

@@ -44,20 +44,26 @@
           <h2 class="section-title">Container</h2>
           <p class="section-desc">Inner dimensions of the shipping box.</p>
           <div class="dim-row">
-            <label class="dim-field">
-              <span class="dim-label">Length</span>
-              <input id="box-l" class="num" type="number" min="0.01" step="any" value="12" />
-            </label>
+            <div class="dim-field">
+              <button class="dim-label" type="button" data-axis="l" aria-pressed="false"
+                      title="Click to highlight length in the 3-D view">Length</button>
+              <input id="box-l" class="num" type="number" min="0.01" step="any" value="12"
+                     aria-label="Container length" />
+            </div>
             <span class="dim-x">×</span>
-            <label class="dim-field">
-              <span class="dim-label">Width</span>
-              <input id="box-w" class="num" type="number" min="0.01" step="any" value="10" />
-            </label>
+            <div class="dim-field">
+              <button class="dim-label" type="button" data-axis="w" aria-pressed="false"
+                      title="Click to highlight width in the 3-D view">Width</button>
+              <input id="box-w" class="num" type="number" min="0.01" step="any" value="10"
+                     aria-label="Container width" />
+            </div>
             <span class="dim-x">×</span>
-            <label class="dim-field">
-              <span class="dim-label">Height</span>
-              <input id="box-h" class="num" type="number" min="0.01" step="any" value="9" />
-            </label>
+            <div class="dim-field">
+              <button class="dim-label" type="button" data-axis="h" aria-pressed="false"
+                      title="Click to highlight height in the 3-D view">Height</button>
+              <input id="box-h" class="num" type="number" min="0.01" step="any" value="9"
+                     aria-label="Container height" />
+            </div>
           </div>
           <div class="volrow">
             <span>Box volume</span>
@@ -71,7 +77,12 @@
             <button id="btn-add" class="btn small" type="button">+ Add type</button>
           </div>
           <div class="items-head">
-            <span></span><span>L</span><span>W</span><span>H</span><span>Qty</span><span></span>
+            <span></span>
+            <span title="Length">L</span>
+            <span title="Width">W</span>
+            <span title="Height">H</span>
+            <span>Qty</span>
+            <span></span>
           </div>
           <div id="items-body" class="items-body"></div>
         </div>
@@ -129,7 +140,11 @@
               <span class="legend-title">Legend</span>
               <div id="legend-items"></div>
             </div>
-            <div class="axes"><span>↗ Length</span><span>→ Width</span><span>↑ Height</span></div>
+            <div class="axes" role="group" aria-label="Highlight an axis">
+              <button class="axis-chip" type="button" data-axis="l" aria-pressed="false">↗ Length</button>
+              <button class="axis-chip" type="button" data-axis="w" aria-pressed="false">→ Width</button>
+              <button class="axis-chip" type="button" data-axis="h" aria-pressed="false">↑ Height</button>
+            </div>
             <div id="placeholder" class="placeholder">
               <p>Set a container and items, then <strong>Pack items</strong>.</p>
             </div>
