@@ -7,7 +7,9 @@ services:
     plan: free
     buildCommand: "pip install -r requirements-web.txt"
     startCommand: "gunicorn webapp.app:app -c gunicorn.conf.py"
-    healthCheckPath: /
+    # /healthz renders no template and does no packing, so Render's probe (and
+    # any keep-warm ping) costs almost nothing.
+    healthCheckPath: /healthz
     autoDeploy: true
     envVars:
       - key: PYTHON_VERSION

@@ -1,0 +1,60 @@
+# Keeps the Render free instance from spinning down.
+#
+# Free web services sleep after ~15 minutes idle, and the next visitor waits
+# 30-60s for a cold Python boot before receiving a byte. Nothing in the app can
+# fix that from the inside — the fix is either a paid instance (which never
+# sleeps) or traffic. This workflow is the traffic.
+#
+# Read before relying on it:
+#
+#   · Scheduled workflows are best-effort. GitHub delays them under load, often
+#     by 5-15 minutes, which is the whole spin-down window — so this reduces
+#     cold starts rather than eliminating them. Every-5 minutes is deliberate
+#     headroom against that delay.
+#   · Actions minutes are free only on public repos. On a private repo each run
+#     bills a 1-minute minimum: every 5 minutes is ~8,600 minutes/month against
+#     a 2,000-minute free allowance. Use an external pinger there instead
+#     (cron-job.org, UptimeRobot) — same effect, no minutes.
+#   · A warm instance runs ~730 hours/month against Render's 750 free instance
+#     hours. This spends nearly the whole monthly allowance to buy fast first
+#     loads. That is the trade; a paid instance is the way out of it.
+#   · GitHub disables scheduled workflows after 60 days with no repo activity.
+#
+# Set the repository variable STOWAGE_URL to the service origin
+# (Settings -> Secrets and variables -> Actions -> Variables), e.g.
+# https://stowage.onrender.com
+
+name: keep-warm
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: keep-warm
+  cancel-in-progress: true
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Ping /healthz
+        env:
+          STOWAGE_URL: ${{ vars.STOWAGE_URL }}
+        run: |
+          if [ -z "$STOWAGE_URL" ]; then
+            echo "STOWAGE_URL is not set — skipping. See this file's header."
+            exit 0
+          fi
+          # A cold instance can take a minute to boot, so allow for it and
+          # retry rather than reporting a failure for the very case we exist for.
+          for attempt in 1 2 3; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 90 \
+                   "${STOWAGE_URL%/}/healthz" || echo 000)
+            echo "attempt $attempt: HTTP $code"
+            [ "$code" = "200" ] && exit 0
+            sleep 15
+          done
+          echo "::warning::keep-warm ping did not get a 200 from $STOWAGE_URL"

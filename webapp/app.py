@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import math
+import mimetypes
 import os
 import threading
 import time
 from typing import Any
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_from_directory
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from binpack import Box, Item, PackingEngine, build_report
@@ -125,9 +126,53 @@ if _PROXY_HOPS:
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=_PROXY_HOPS, x_proto=_PROXY_HOPS)
 
 
+# Vendored front-end libraries. Filenames carry their version, so a given URL
+# never changes content and can be cached indefinitely.
+_VENDOR_DIR = os.path.join(app.root_path, "static", "vendor")
+_VENDOR_MAX_AGE = 31_536_000        # one year
+
+
 @app.get("/")
 def index() -> str:
     return render_template("index.html")
+
+
+@app.get("/vendor/<path:filename>")
+def vendor(filename: str) -> Any:
+    """
+    Serve a vendored library, precompressed where a .gz sits beside it.
+
+    Self-hosting only beats a public CDN if the bytes are compressed: the
+    Plotly bundle is 1.6 MB raw against 0.5 MB gzipped, and nothing in front of
+    this app compresses for us. Shipping the .gz alongside the file keeps that
+    off the request path entirely — no per-request compression, just a sendfile.
+    """
+    accepts_gzip = "gzip" in request.headers.get("Accept-Encoding", "").lower()
+    compressed = f"{filename}.gz"
+
+    if accepts_gzip and os.path.isfile(os.path.join(_VENDOR_DIR, compressed)):
+        response = send_from_directory(_VENDOR_DIR, compressed, max_age=_VENDOR_MAX_AGE)
+        response.headers["Content-Encoding"] = "gzip"
+        response.headers["Content-Type"] = (
+            mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        )
+    else:
+        response = send_from_directory(_VENDOR_DIR, filename, max_age=_VENDOR_MAX_AGE)
+
+    response.headers["Cache-Control"] = f"public, max-age={_VENDOR_MAX_AGE}, immutable"
+    response.headers["Vary"] = "Accept-Encoding"
+    return response
+
+
+@app.get("/healthz")
+def healthz() -> Any:
+    """
+    Liveness probe, and the endpoint a keep-warm ping should hit.
+
+    Deliberately cheaper than "/": no template render, no packing — just proof
+    the worker is up, so pinging it costs almost nothing.
+    """
+    return jsonify(ok=True), 200
 
 
 @app.post("/api/pack")
